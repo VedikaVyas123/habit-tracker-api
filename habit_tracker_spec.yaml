@@ -1,0 +1,105 @@
+project: Habit Tracker API
+goal: >
+  Build a small REST API to track daily habits with streaks.
+stack:
+  language: python
+  framework: fastapi
+  testing: pytest
+  runtime: "python>=3.10"
+data_model:
+  Habit:
+    id: int            # auto-increment
+    name: str          # 1..80 chars
+    description: str?  # optional, <= 280 chars
+    status: enum[pending, completed]
+    streak_days: int   # >= 0
+    last_completed_at: date?  # optional ISO date (YYYY-MM-DD)
+rules:
+  - status can only be 'pending' or 'completed'
+  - streak_days increments by 1 only when a habit is completed on a day
+    that is exactly the next calendar day after last_completed_at
+  - if a day is missed, streak_days resets to 0 on next completion
+  - creating a habit defaults: status=pending, streak_days=0, last_completed_at=null
+endpoints:
+  - name: create_habit
+    method: POST
+    path: /habits
+    request:
+      json:
+        name: str (required)
+        description: str (optional, max=280)
+    responses:
+      201:
+        json: { id:int, name:str, description:str?, status:str, streak_days:int, last_completed_at:str? }
+      400: { error:str }
+  - name: list_habits
+    method: GET
+    path: /habits
+    query:
+      status: enum[pending, completed]?
+    responses:
+      200:
+        json: [ { id:int, name:str, description:str?, status:str, streak_days:int, last_completed_at:str? } ]
+  - name: update_habit
+    method: PATCH
+    path: /habits/{id}
+    request:
+      json:
+        name: str? 
+        description: str?
+        status: enum[pending, completed]?   # note: status change does NOT change streak
+    responses:
+      200: { json: { id:int, name:str, description:str?, status:str, streak_days:int, last_completed_at:str? } }
+      404: { error:str }
+  - name: delete_habit
+    method: DELETE
+    path: /habits/{id}
+    responses:
+      204: {}
+      404: { error:str }
+  - name: complete_today
+    method: POST
+    path: /habits/{id}/complete
+    purpose: >
+      Mark habit as completed for *today*. Updates status, streak_days, and last_completed_at
+      according to rules above.
+    responses:
+      200: { json: { id:int, name:str, description:str?, status:str, streak_days:int, last_completed_at:str } }
+      409: { error:str }  # already completed today
+      404: { error:str }
+  - name: stats
+    method: GET
+    path: /stats
+    responses:
+      200:
+        json:
+          total_habits: int
+          completed_today: int
+          active_streaks_ge_3: int
+non_functional_requirements:
+  - in-memory storage only (dict/list). no database.
+  - type hints required
+  - pydantic models for request/response validation
+  - include OpenAPI docs (FastAPI default /docs)
+tests:
+  - create a habit, then list → habit is returned with defaults
+  - update a habit’s name and description → fields persist
+  - completing today first time → streak_days=1, last_completed_at=today
+  - completing two consecutive days → streak_days increments (1 → 2)
+  - skipping a day then completing → streak resets to 0 then becomes 1
+  - completing twice on same day → 409 error
+  - stats endpoint returns consistent counts
+acceptance_criteria:
+  - all tests pass (pytest)
+  - GET /docs shows all endpoints with correct schemas
+examples:
+  complete_flow:
+    - POST /habits
+      body: { "name": "Morning Walk", "description": "20 min walk" }
+      expect: 201
+    - POST /habits/1/complete
+      expect:
+        status: 200
+        body_contains: { "streak_days": 1 }
+    - POST /habits/1/complete   # same day again
+      expect: 409
